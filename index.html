@@ -137,8 +137,9 @@ svg text{fill:var(--muted);font-size:11px}
 .seg button.on{background:var(--brand);color:#fff}
 
 /* impresión / exportar a PDF: la vista activa (Resumen o Ranking), limpia */
+.print-only{display:none}
 @media print{
-  @page{margin:12mm}
+  @page{margin:10mm}
   *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
   body{background:#fff!important;color:#111!important}
   .wrap{max-width:100%;padding:0}
@@ -150,8 +151,36 @@ svg text{fill:var(--muted);font-size:11px}
   .card,.progress-card,.chart-card,.tbl-wrap{box-shadow:none!important;break-inside:avoid}
   tbody tr{break-inside:avoid}
   .grid-2{grid-template-columns:1fr 1fr}
-  .brandmark h1{font-size:18px}
+  .brandmark h1{font-size:16px}
+  .brandmark .sub{font-size:10px}
+  .print-only{display:block!important}
   select{border:none!important;background:transparent!important;-webkit-appearance:none;appearance:none;font-weight:600}
+
+  /* Ranking en UNA sola hoja: ocultar controles y compactar (hasta ~46 filas) */
+  body[data-print="gestores"] #view-gestores .tbl-tools{display:none!important}
+  body[data-print="gestores"] #view-gestores .tbl-wrap{border:none!important}
+  body[data-print="gestores"] #gestTable{width:100%}
+  body[data-print="gestores"] #gestTable th,
+  body[data-print="gestores"] #gestTable td{padding:1.4px 6px!important;font-size:8.4px!important;line-height:1.12!important}
+  body[data-print="gestores"] #gestTable .pill{padding:0 5px!important;font-size:8px!important}
+  body[data-print="gestores"] #gestTable .minibar{display:none!important}
+  body[data-print="gestores"] #gestTable tfoot{display:none!important}
+  body[data-print="gestores"] #gestTable td .muted{font-size:7.6px!important}
+
+  /* Resumen en UNA sola hoja: ocultar el filtro interactivo y compactar */
+  body[data-print="resumen"] #resScopeCard{display:none!important}
+  body[data-print="resumen"] .kpis{gap:8px!important;margin-bottom:10px!important}
+  body[data-print="resumen"] .kpi{padding:8px 11px!important}
+  body[data-print="resumen"] .kpi .k-val{font-size:18px!important;margin-top:2px!important}
+  body[data-print="resumen"] .kpi .k-lbl{font-size:9px!important}
+  body[data-print="resumen"] .kpi .k-sub{font-size:9px!important;margin-top:1px!important}
+  body[data-print="resumen"] .progress-card{padding:12px!important;margin-bottom:10px!important}
+  body[data-print="resumen"] .pc-head .pct{font-size:24px!important}
+  body[data-print="resumen"] .chart-card{padding:12px!important}
+  body[data-print="resumen"] #divBars > div{margin:4px 0!important}
+  body[data-print="resumen"] #divBars .bar{height:10px!important}
+  body[data-print="resumen"] .legend{font-size:9.5px!important}
+  body[data-print="resumen"] #divBarsTitle,body[data-print="resumen"] .chart-card h3{font-size:12px!important}
 }</style>
 </head>
 <body>
@@ -197,6 +226,7 @@ svg text{fill:var(--muted);font-size:11px}
         <div class="chipbar" id="resScope"></div>
         <button class="btn ghost sm" id="resScopeClear" style="display:none">País (todo)</button>
       </div>
+      <div id="resPrintCaption" class="print-only" style="margin-bottom:12px"></div>
       <div class="kpis" id="kpis"></div>
       <div class="progress-card" id="progressCard"></div>
       <div class="grid-2">
@@ -229,6 +259,7 @@ svg text{fill:var(--muted);font-size:11px}
     <!-- GESTORES -->
     <section class="view" id="view-gestores">
       <div class="tbl-wrap">
+        <div id="rankPrintCaption" class="print-only" style="padding:6px 4px 10px"></div>
         <div class="tbl-tools" style="border-bottom:none;padding-bottom:0">
           <div class="chipbar">
             <span class="chip" style="background:transparent;border:none;padding-left:0;font-weight:600;color:var(--ink)">Ranking nacional por nivel:</span>
@@ -271,8 +302,15 @@ svg text{fill:var(--muted);font-size:11px}
     <!-- TENDENCIA -->
     <section class="view" id="view-tendencia">
       <div class="chart-card">
-        <h3>Cumplimiento país por corte</h3>
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:10px">
+          <div>
+            <h3 id="trendTitle">Cumplimiento por corte</h3>
+            <div class="muted" style="font-size:12.5px">La línea roja punteada es siempre el País; filtra para comparar una parte contra él.</div>
+          </div>
+          <div class="chipbar" id="trendScope" style="justify-content:flex-end"></div>
+        </div>
         <div id="trendChart"></div>
+        <div id="trendLegend" style="margin-top:6px"></div>
       </div>
       <div class="tbl-wrap" style="margin-bottom:16px">
         <div class="tbl-tools"><b>Cortes guardados</b>
@@ -334,7 +372,7 @@ const pct = v => (v==null||!isFinite(v)) ? "—" : (v*100).toFixed(1)+"%";
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 
-let STATE = { snapshots:[], current:null, path:{}, structSort:{key:"real",dir:-1}, gestRank:"peores", rankLevel:"GESTOR", rankScope:{}, rankSort:{key:"cumpl",dir:1}, resumenScope:{}, expected:1, hideVirtual:true };
+let STATE = { snapshots:[], current:null, path:{}, structSort:{key:"real",dir:-1}, gestRank:"peores", rankLevel:"GESTOR", rankScope:{}, rankSort:{key:"cumpl",dir:1}, resumenScope:{}, trendScope:{}, expected:1, hideVirtual:true };
 
 /* ---------- Curva de meta esperada por día ---------- */
 const CURVE_DEFAULT = {"Lunes":20,"Martes":40,"Miércoles":60,"Jueves":80,"Viernes":100,"Sábado":100,"Domingo":100};
@@ -511,6 +549,11 @@ function renderResumen(){
   const scopeLbl  = t.level==="PAIS" ? "nacional" : (LEVEL_SG[t.level]||"").toLowerCase();
   // hijos (un nivel abajo) para el desglose
   const kids=childrenAt(STATE.current.records, scope);
+  // Encabezado para el PDF del Resumen
+  const rFecha=STATE.current.cierre?new Date(STATE.current.cierre).toLocaleDateString('es-MX',{day:'2-digit',month:'long',year:'numeric'}):STATE.current.fileName;
+  $("#resPrintCaption").innerHTML=`
+    <div style="font-size:15px;font-weight:800;letter-spacing:-.2px">Resumen · ${esc(scopeName)}${t.level==="PAIS"?"":` <span style="font-weight:500;font-size:11px;color:#555">(${esc(scopeLbl)})</span>`}</div>
+    <div style="font-size:10px;color:#555;margin-top:2px">Corte ${esc((STATE.current.dayLabel?STATE.current.dayLabel+' · ':'')+rFecha)}${STATE.current.semana?` · Sem ${STATE.current.semana}`:''} · Meta esperada al día ${(STATE.expected*100).toFixed(0)}%</div>`;
   const kpis=[
     {lbl:"Meta del plan", val:fmtMoney.format(t.plan), sub:`Cobranza planeada · ${kids.rows.length} ${LEVEL_PL[kids.showLevel]||''}`, hl:false},
     {lbl:"Cobranza real", val:fmtMoney.format(t.real), sub:"Logrado al corte", hl:true},
@@ -748,6 +791,14 @@ function renderGestores(){
   $("#rankBench").innerHTML=`Cumplimiento país: <b class="pill ${classify(t.cumpl)}" style="padding:2px 8px">${pct(t.cumpl)}</b> · meta esperada ${STATE.current.dayLabel||''}: <b>${(STATE.expected*100).toFixed(0)}%</b>`;
 
   const plName=LEVEL_PL[level];
+  // Encabezado para el PDF (documenta el filtro aplicado)
+  const scopeParts=anc.filter(L=>STATE.rankScope[LEVEL_COL[L]]).map(L=>STATE.rankScope[LEVEL_COL[L]].replace(/^DIVISION /,""));
+  const scopeDesc=scopeParts.length?scopeParts.join(" · "):"Nacional";
+  const ordenTxt=STATE.gestRank==="peores"?"menor a mayor":"mayor a menor";
+  const fechaTxt=STATE.current.cierre?new Date(STATE.current.cierre).toLocaleDateString('es-MX',{day:'2-digit',month:'long',year:'numeric'}):STATE.current.fileName;
+  $("#rankPrintCaption").innerHTML=`
+    <div style="font-size:14px;font-weight:800;letter-spacing:-.2px">Ranking por ${LEVEL_SG[level]} · ${esc(scopeDesc)}</div>
+    <div style="font-size:10px;color:#555;margin-top:2px">Orden por cumplimiento (${ordenTxt}) · Corte ${esc((STATE.current.dayLabel?STATE.current.dayLabel+' · ':'')+fechaTxt)}${STATE.current.semana?` · Sem ${STATE.current.semana}`:''} · Meta esperada al día ${(STATE.expected*100).toFixed(0)}% · Cumplimiento país ${pct(t.cumpl)}</div>`;
   $("#gestCount").textContent=`${g.length} ${plName}`;
   const top=g.slice(0,300);
   const hasCtx = level!=="DIVISION";
@@ -791,31 +842,80 @@ function renderGestores(){
 
 /* ---------- Tendencia ---------- */
 function sortByDate(a,b){const da=a.cierre||a.importedAt,db=b.cierre||b.importedAt;return da<db?-1:da>db?1:0;}
+
+// Menús en cascada de la Tendencia (División → Cuartel → Región → Gerencia)
+function renderTrendScope(){
+  const levels=["DIVISION","CUARTEL","REGION","GERENCIA"];
+  const box=$("#trendScope"); const sc=STATE.trendScope;
+  let visible=[]; for(const L of levels){ visible.push(L); if(!sc[LEVEL_COL[L]]) break; }
+  const any=Object.keys(sc).some(k=>sc[k]);
+  box.innerHTML = `<span class="chip" style="background:transparent;border:none;color:var(--muted)">Comparar:</span>`+
+    visible.map(L=>{
+      const f=LEVEL_COL[L]; const opts=distinctFor(L,sc); const sel=sc[f]||"";
+      return `<label class="chip" style="gap:6px">${LEVEL_SG[L]}
+        <select data-f="${f}" class="trend-sel" style="padding:3px 6px;font-size:12px;max-width:210px">
+          <option value="">— todas —</option>
+          ${opts.map(o=>`<option value="${esc(o)}" ${o===sel?"selected":""}>${esc(o.replace(/^DIVISION /,''))}</option>`).join("")}
+        </select></label>`;
+    }).join("") + (any?`<button class="btn ghost sm" id="trendClear">Solo país</button>`:"");
+  $$(".trend-sel").forEach(s=>s.onchange=()=>{
+    const f=s.dataset.f, val=s.value; sc[f]=val||undefined;
+    const changed=Object.keys(LEVEL_COL).find(k=>LEVEL_COL[k]===f);
+    for(const L of NIVELES.slice(NIVELES.indexOf(changed)+1)) delete sc[LEVEL_COL[L]];
+    renderTrend();
+  });
+  if(any) $("#trendClear").onclick=()=>{ STATE.trendScope={}; renderTrend(); };
+}
+
 function renderTrend(){
-  const snaps=[...STATE.snapshots].sort(sortByDate).map(s=>{const t=paisTotals(s.records);
-    return {key:s.key,lbl:(s.dayLabel||"")||(s.cierre?new Date(s.cierre).toLocaleDateString('es-MX',{day:'2-digit',month:'short'}):s.fileName),
-      cumpl:t.cumpl||0,real:t.real,plan:t.plan};});
-  const el=$("#trendChart");
-  if(snaps.length<2){ el.innerHTML=`<div class="empty-note">Carga al menos dos cortes (p. ej. Lunes y Martes) para ver la línea de tendencia del cumplimiento país.</div>`; return; }
-  const W=Math.max(520,snaps.length*90), H=240, pad=40;
-  const maxC=Math.max(0.1,...snaps.map(s=>s.cumpl))*1.15;
+  renderTrendScope();
+  const scope=STATE.trendScope; const hasScope=Object.keys(scope).some(k=>scope[k]);
+  const st=hasScope?scopeTotals(STATE.current.records,scope):null;
+  const scopeName=hasScope?(st.name||"").replace(/^DIVISION /,""):"País";
+  $("#trendTitle").textContent = hasScope?`Cumplimiento por corte — ${scopeName} vs País`:`Cumplimiento por corte — País`;
+
+  const snaps=[...STATE.snapshots].sort(sortByDate).map(s=>({
+    key:s.key,
+    lbl:(s.dayLabel||"")||(s.cierre?new Date(s.cierre).toLocaleDateString('es-MX',{day:'2-digit',month:'short'}):s.fileName),
+    pais:(paisTotals(s.records).cumpl||0),
+    sc: hasScope?(scopeTotals(s.records,scope).cumpl||0):null
+  }));
+  const el=$("#trendChart"), leg=$("#trendLegend");
+  if(snaps.length<2){ el.innerHTML=`<div class="empty-note">Carga al menos dos cortes (p. ej. Lunes y Martes) para ver la tendencia.</div>`; leg.innerHTML=""; return; }
+
+  const W=Math.max(520,snaps.length*90), H=250, pad=40;
+  const allV=snaps.flatMap(s=>[s.pais, s.sc]).filter(v=>v!=null);
+  const maxC=Math.max(0.1,...allV)*1.18;
   const x=i=>pad+(W-pad*1.2-pad)*(i/(snaps.length-1));
   const y=v=>H-pad-(H-pad*1.6)*(v/maxC);
-  const pts=snaps.map((s,i)=>[x(i),y(s.cumpl)]);
-  const line=pts.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
-  const area=`M${pts[0][0]},${H-pad} `+pts.map(p=>'L'+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ')+` L${pts[pts.length-1][0]},${H-pad} Z`;
-  const brand=getVar("--brand");
-  let g="";
-  for(let k=0;k<=4;k++){const v=maxC*k/4;const yy=y(v);g+=`<line x1="${pad}" y1="${yy}" x2="${W-pad*0.2}" y2="${yy}" stroke="var(--line)"/><text x="4" y="${yy+3}">${(v*100).toFixed(0)}%</text>`;}
+  const red=getVar("--red"), brand=getVar("--brand");
+  const path=key=>snaps.map((s,i)=>(i?'L':'M')+x(i).toFixed(1)+' '+y(s[key]).toFixed(1)).join(' ');
+
+  let grid="";
+  for(let k=0;k<=4;k++){const v=maxC*k/4;const yy=y(v);grid+=`<line x1="${pad}" y1="${yy}" x2="${W-pad*0.2}" y2="${yy}" stroke="var(--line)"/><text x="4" y="${yy+3}">${(v*100).toFixed(0)}%</text>`;}
+
+  // Serie PAÍS: siempre, punteada y roja
+  const paisLine=`<path d="${path('pais')}" fill="none" stroke="${red}" stroke-width="2.2" stroke-dasharray="6 5" stroke-linejoin="round"/>`;
+  const paisDots=snaps.map((s,i)=>`<circle cx="${x(i).toFixed(1)}" cy="${y(s.pais).toFixed(1)}" r="3.5" fill="${red}" stroke="var(--panel)" stroke-width="1.5"/>`).join("");
+  // etiquetas país solo si NO hay alcance (para no saturar)
+  const paisLabels=!hasScope?snaps.map((s,i)=>`<text x="${x(i).toFixed(1)}" y="${(y(s.pais)-12).toFixed(1)}" text-anchor="middle" style="font-weight:700;fill:${red}">${(s.pais*100).toFixed(1)}%</text>`).join(""):"";
+
+  // Serie ALCANCE: sólida, con etiquetas y puntos semáforo
+  let scoLine="", scoDots="";
+  if(hasScope){
+    scoLine=`<path d="${path('sc')}" fill="none" stroke="${brand}" stroke-width="2.6" stroke-linejoin="round"/>`;
+    scoDots=snaps.map((s,i)=>{const c=colorFor(classify(s.sc));return `<circle cx="${x(i).toFixed(1)}" cy="${y(s.sc).toFixed(1)}" r="5" fill="${c}" stroke="var(--panel)" stroke-width="2"/>
+      <text x="${x(i).toFixed(1)}" y="${(y(s.sc)-12).toFixed(1)}" text-anchor="middle" style="font-weight:700;fill:var(--ink)">${(s.sc*100).toFixed(1)}%</text>`;}).join("");
+  }
+  const xlabels=snaps.map((s,i)=>`<text x="${x(i).toFixed(1)}" y="${H-pad+18}" text-anchor="middle">${esc(s.lbl)}</text>`).join("");
+
   el.innerHTML=`<div style="overflow-x:auto"><svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" style="min-width:${W}px">
-    ${g}
-    <path d="${area}" fill="${brand}" opacity="0.10"/>
-    <path d="${line}" fill="none" stroke="${brand}" stroke-width="2.5" stroke-linejoin="round"/>
-    ${snaps.map((s,i)=>{const[px,py]=pts[i];const c=colorFor(classify(s.cumpl));
-      return `<circle cx="${px}" cy="${py}" r="5" fill="${c}" stroke="var(--panel)" stroke-width="2"/>
-      <text x="${px}" y="${py-12}" text-anchor="middle" style="font-weight:700;fill:var(--ink)">${(s.cumpl*100).toFixed(1)}%</text>
-      <text x="${px}" y="${H-pad+18}" text-anchor="middle">${esc(s.lbl)}</text>`;}).join("")}
+    ${grid}${paisLine}${scoLine}${paisDots}${scoDots}${paisLabels}${xlabels}
   </svg></div>`;
+  leg.innerHTML=`<div class="legend" style="margin:0">
+    ${hasScope?`<span><svg width="26" height="8"><line x1="0" y1="4" x2="26" y2="4" stroke="${brand}" stroke-width="3"/></svg> ${esc(scopeName)}</span>`:""}
+    <span><svg width="26" height="8"><line x1="0" y1="4" x2="26" y2="4" stroke="${red}" stroke-width="2.2" stroke-dasharray="5 4"/></svg> País (referencia)</span>
+  </div>`;
 }
 function renderSnapTable(){
   const snaps=[...STATE.snapshots].sort(sortByDate).reverse();
