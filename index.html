@@ -777,7 +777,7 @@ function renderGestores(){
   // Entidades del nivel, acotadas por el alcance (padre) elegido
   let g=STATE.current.records.filter(r=> r.nivel===level && matchesScope(r,anc,STATE.rankScope) && (r.plan||0)>=minMeta
       && !(isGestor && STATE.hideVirtual && /empleado\s+virtual|vacante/i.test(r.gestor||"")))
-    .map(r=>({name:r[nameField]||"(sin nombre)", ctx:parentCtx(r,level),
+    .map(r=>({name:r[nameField]||"(sin nombre)", ctx:parentCtx(r,level), cuartel:r.cuartel,
       plan:r.plan||0,real:r.real||0,cumpl:(r.plan>0?r.real/r.plan:null),dif:(r.real||0)-(r.plan||0)}));
   if(q) g=g.filter(x=>x.name.toLowerCase().includes(q)||x.ctx.toLowerCase().includes(q));
 
@@ -801,31 +801,34 @@ function renderGestores(){
     <div style="font-size:10px;color:#555;margin-top:2px">Orden por cumplimiento (${ordenTxt}) · Corte ${esc((STATE.current.dayLabel?STATE.current.dayLabel+' · ':'')+fechaTxt)}${STATE.current.semana?` · Sem ${STATE.current.semana}`:''} · Meta esperada al día ${(STATE.expected*100).toFixed(0)}% · Cumplimiento país ${pct(t.cumpl)}</div>`;
   $("#gestCount").textContent=`${g.length} ${plName}`;
   const top=g.slice(0,300);
-  const hasCtx = level!=="DIVISION";
-  const colspan = hasCtx ? 7 : 6;
+  const colspan = 6;
   const arrow=k=> sk.key===k?(sk.dir<0?" ▾":" ▴"):"";
-  const th=(k,l,left)=>`<th data-k="${k}" ${left?'style="text-align:left"':''}>${l}${arrow(k)}</th>`;
+  const th=(k,l,align)=>`<th data-k="${k}" style="text-align:${align||'center'}">${l}${arrow(k)}</th>`;
+  const C='style="text-align:center"';
 
-  // Filas de referencia fijas (no se ordenan): País + alcance actual
-  const refRow=(label,sub,o)=>`<tr class="total-row">
-      <td>★</td><td style="text-align:left">${esc(label)}${sub?` <span class="muted" style="font-weight:400">· ${esc(sub)}</span>`:''}</td>
-      ${hasCtx?'<td class="muted" style="text-align:left;font-size:12px">referencia</td>':''}
-      <td>${fmtMoney.format(o.plan)}</td><td>${fmtMoney.format(o.real)}</td><td>${pill(o.cumpl)}</td>
-      <td class="${o.dif>=0?'pos':'neg'}">${o.dif>=0?'+':''}${fmtMoney.format(o.dif)}</td></tr>`;
+  // País (+ alcance) como referencia, PERO posicionados por su cumplimiento según el orden activo
+  const refObjs=[{isRef:true,name:"PAÍS",sub:"nacional",plan:t.plan,real:t.real,cumpl:t.cumpl,dif:t.dif}];
   const sa=scopeAggRow();
-  let refs = refRow("PAÍS","nacional",t);
-  if(sa) refs += refRow(sa.name.replace(/^DIVISION /,''), LEVEL_SG[sa.level].toLowerCase(), sa);
+  if(sa) refObjs.push({isRef:true,name:sa.name.replace(/^DIVISION /,''),sub:LEVEL_SG[sa.level].toLowerCase(),plan:sa.plan,real:sa.real,cumpl:sa.cumpl,dif:sa.dif});
+  const combined=[...top,...refObjs].sort((a,b)=>{ if(sk.key==="name") return sk.dir*String(a.name).localeCompare(String(b.name)); const x=a[sk.key],y=b[sk.key]; return sk.dir*((x??-1e18)-(y??-1e18)); });
+
+  // Matiz gris al cuartel NEZAHUALCOYOTL y todo lo suyo hasta nivel Gerencia
+  const tintLevel = level==="CUARTEL"||level==="REGION"||level==="GERENCIA";
+  let n=0;
+  const bodyRows=combined.map(x=>{
+    const cells=`<td ${C}>${fmtMoney.format(x.plan)}</td><td ${C}>${fmtMoney.format(x.real)}</td><td ${C}>${pill(x.cumpl)}</td><td class="${x.dif>=0?'pos':'neg'}" ${C}>${x.dif>=0?'+':''}${fmtMoney.format(x.dif)}</td>`;
+    if(x.isRef){
+      return `<tr class="total-row"><td ${C}>★</td><td style="text-align:left">${esc(x.name)}${x.sub?` <span class="muted" style="font-weight:400">· ${esc(x.sub)}</span>`:''}</td>${cells}</tr>`;
+    }
+    n++;
+    const tint = tintLevel && (x.cuartel||'').toUpperCase().includes("NEZAHUALCOYOTL");
+    return `<tr${tint?' style="background:rgba(128,132,140,.13)"':''}><td ${C}>${n}</td>`+
+      `<td style="text-align:left"><div style="font-weight:600">${esc(x.name.replace(/^DIVISION /,''))}</div></td>${cells}</tr>`;
+  }).join("");
 
   $("#gestTable").innerHTML=`
-    <thead><tr><th>#</th>${th("name",LEVEL_SG[level],true)}${hasCtx?'<th style="text-align:left">Ubicación</th>':''}${th("plan","Meta")}${th("real","Real")}${th("cumpl","Cumplimiento")}${th("dif","Dif.")}</tr></thead>
-    <tbody>${refs}${top.map((x,i)=>`
-      <tr><td>${i+1}</td>
-        <td style="text-align:left"><div style="font-weight:600">${esc(x.name.replace(/^DIVISION /,''))}</div></td>
-        ${hasCtx?`<td class="muted" style="text-align:left;font-size:12px">${esc(x.ctx)}</td>`:""}
-        <td>${fmtMoney.format(x.plan)}</td><td>${fmtMoney.format(x.real)}</td>
-        <td>${pill(x.cumpl)}</td>
-        <td class="${x.dif>=0?'pos':'neg'}">${x.dif>=0?'+':''}${fmtMoney.format(x.dif)}</td></tr>`).join("")}
-    </tbody>
+    <thead><tr><th ${C}>#</th>${th("name",LEVEL_SG[level],'left')}${th("plan","Meta",'center')}${th("real","Real",'center')}${th("cumpl","Cumplimiento",'center')}${th("dif","Dif.",'center')}</tr></thead>
+    <tbody>${bodyRows}</tbody>
     ${(!top.length)?`<tbody><tr><td colspan="${colspan}"><div class="empty-note">Sin ${plName} con esos filtros.</div></td></tr></tbody>`:
       (g.length>top.length?`<tfoot><tr><td colspan="${colspan}" class="muted" style="text-align:center;font-size:12px">Mostrando ${top.length} de ${g.length} ${plName} (ajusta filtros o busca para ver más)</td></tr></tfoot>`:"")}`;
 
