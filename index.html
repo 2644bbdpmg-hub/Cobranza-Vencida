@@ -318,6 +318,7 @@ svg text{fill:var(--muted);font-size:11px}
             <button class="btn ghost sm" id="btnExport">⬇ Exportar respaldo</button>
             <button class="btn ghost sm" id="btnImport">⬆ Importar respaldo</button>
             <input type="file" id="importInput" accept=".json" class="hidden">
+            <button class="btn ghost sm" id="btnReset" style="color:var(--red);border-color:var(--red)">🗑 Reiniciar (borrar todo)</button>
           </div>
         </div>
         <div style="overflow:auto"><table id="snapTable"></table></div>
@@ -364,6 +365,8 @@ const NIVELES = ["DIVISION","CUARTEL","REGION","GERENCIA","GESTOR"];
 const LEVEL_COL = {DIVISION:"division",CUARTEL:"cuartel",REGION:"region",GERENCIA:"gerencia",GESTOR:"gestor"};
 const LEVEL_PL = {DIVISION:"divisiones",CUARTEL:"cuarteles",REGION:"regiones",GERENCIA:"gerencias",GESTOR:"gestores"};
 const LEVEL_SG = {DIVISION:"División",CUARTEL:"Cuartel",REGION:"Región",GERENCIA:"Gerencia",GESTOR:"Gestor"};
+// El nivel "Cuartel" ahora puede llegar nombrado como "Franquicia": se tratan como el mismo nivel.
+const NIVEL_ALIAS = {FRANQUICIA:"CUARTEL"};
 const DAYS = ["Lunes","Martes","Miércoles","Miercoles","Jueves","Viernes","Sábado","Sabado","Domingo"];
 
 const fmtMoney = new Intl.NumberFormat('es-MX',{style:'currency',currency:'MXN',maximumFractionDigits:0});
@@ -390,6 +393,7 @@ function openDB(){return new Promise((res,rej)=>{const r=indexedDB.open(DB_NAME,
 async function dbPut(o){const db=await openDB();return new Promise((res,rej)=>{const t=db.transaction(STORE,"readwrite");t.objectStore(STORE).put(o);t.oncomplete=()=>res();t.onerror=e=>rej(e.target.error);});}
 async function dbAll(){const db=await openDB();return new Promise((res,rej)=>{const t=db.transaction(STORE,"readonly");const rq=t.objectStore(STORE).getAll();rq.onsuccess=()=>res(rq.result||[]);rq.onerror=e=>rej(e.target.error);});}
 async function dbDel(k){const db=await openDB();return new Promise((res,rej)=>{const t=db.transaction(STORE,"readwrite");t.objectStore(STORE).delete(k);t.oncomplete=()=>res();t.onerror=e=>rej(e.target.error);});}
+async function dbClear(){const db=await openDB();return new Promise((res,rej)=>{const t=db.transaction(STORE,"readwrite");t.objectStore(STORE).clear();t.oncomplete=()=>res();t.onerror=e=>rej(e.target.error);});}
 
 /* ---------- utilidades ---------- */
 function toNum(v){ if(v==null) return null; if(typeof v==="number") return isFinite(v)?v:null;
@@ -429,13 +433,14 @@ function parseWorkbook(arrbuf, fileName){
   const sheet = pickSheet(wb);
   const aoa = XLSX.utils.sheet_to_json(wb.Sheets[sheet],{header:1,raw:true,blankrows:false});
   const cierre = findDate(aoa);
-  const records=[];
+  const records=[]; let cuartelTerm="Cuartel";
   for(const row of aoa){
     // Columna B (índice 1) = Nivel; A suele venir vacía
     let idx=-1, niv=null;
     for(let c=0;c<Math.min(3,row.length);c++){
       const v=String(row[c]||"").trim().toUpperCase();
-      if(NIVELES.includes(v)){idx=c;niv=v;break;}
+      const key = NIVELES.includes(v) ? v : NIVEL_ALIAS[v]; // acepta "FRANQUICIA" como "CUARTEL"
+      if(key){ idx=c; niv=key; if(v==="FRANQUICIA") cuartelTerm="Franquicia"; break; }
     }
     if(idx<0) continue;
     const o=idx; // offset base
@@ -450,13 +455,13 @@ function parseWorkbook(arrbuf, fileName){
       requerido, plan, real
     });
   }
-  if(!records.length) throw new Error("No se encontraron filas con niveles (DIVISION/CUARTEL/…). ¿Es el archivo correcto?");
+  if(!records.length) throw new Error("No se encontraron filas con niveles (DIVISION/CUARTEL/FRANQUICIA/REGION/…). ¿Es el archivo correcto?");
   // etiqueta día / semana desde nombre
   let dayLabel=null; for(const d of DAYS){ if(new RegExp(d,"i").test(fileName)){dayLabel=d.replace("Miercoles","Miércoles").replace("Sabado","Sábado");break;} }
   const semM=fileName.match(/sem\s*0*(\d+)/i); const semana=semM?+semM[1]:null;
   const key = cierre ? cierre.toISOString().slice(0,10) : (fileName.replace(/\.[^.]+$/,""));
   return { key, cierre:cierre?cierre.toISOString():null, dayLabel, semana, fileName,
-           importedAt:new Date().toISOString(), records, sheet };
+           importedAt:new Date().toISOString(), cuartelTerm, records, sheet };
 }
 function clean(v){ if(v==null) return null; const s=String(v).trim(); return s===""||s.toUpperCase()==="NONE"?null:s; }
 
@@ -494,6 +499,12 @@ function childrenAt(rec, path){
 function render(){
   if(!STATE.current){ return; }
   STATE.expected = expectedFor(STATE.current.dayLabel);
+  // Etiqueta del nivel "Cuartel/Franquicia" según el término que use el archivo cargado
+  const ct = STATE.current.cuartelTerm || "Cuartel";
+  LEVEL_SG.CUARTEL = ct;
+  LEVEL_PL.CUARTEL = (ct==="Franquicia") ? "franquicias" : "cuarteles";
+  const cbtn = document.querySelector('#rankLevel button[data-lvl="CUARTEL"]'); if(cbtn) cbtn.textContent = ct;
+  const sub = document.querySelector('.brandmark .sub'); if(sub) sub.textContent = `Avance diario vs meta · País → División → ${ct} → Región → Gerencia → Gestor`;
   renderCorte();
   renderResumen();
   renderStructure();
@@ -991,6 +1002,13 @@ function initEvents(){
   $("#btnExport").onclick=exportBackup;
   $("#btnImport").onclick=()=>$("#importInput").click();
   $("#importInput").onchange=e=>importBackup(e.target.files[0]);
+  $("#btnReset").onclick=async()=>{
+    if(!confirm("¿Borrar TODOS los cortes cargados y empezar de cero?\n\nEsto no se puede deshacer. Si quieres conservarlos, primero usa “Exportar respaldo”.")) return;
+    try{ await dbClear(); }catch(e){}
+    STATE.snapshots=[]; STATE.current=null; STATE.resumenScope={}; STATE.rankScope={}; STATE.trendScope={};
+    toast("Historial borrado · empezando de cero");
+    setTimeout(()=>location.reload(), 500);
+  };
 }
 function exportBackup(){
   const blob=new Blob([JSON.stringify({app:"cobranza-vencida",v:1,exported:new Date().toISOString(),snapshots:STATE.snapshots},null,0)],{type:"application/json"});
